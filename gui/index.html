@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🛡️ Multi-Feature AI Content Moderation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">🛡️</div>
+      <div class="brand-text">
+        <h1>AI Content Moderation <span class="badge-tag">Desktop Container</span></h1>
+        <p class="subtitle">MobileNetV2 Multi-Feature Fusion (Global + Human Crop + Pose)</p>
+      </div>
+    </div>
+    
+    <div class="header-actions">
+      <div class="model-badge-container">
+        <span class="status-dot online"></span>
+        <span class="model-label">Model Aktif:</span>
+        <select id="modelSelector" class="model-select" title="Pilih Model"></select>
+      </div>
+      <button id="btnReloadModel" class="btn-icon" title="Muat Ulang Model">🔄</button>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="single-tab">
+      <span class="tab-icon">⚡</span> Uji Gambar Tunggal
+    </button>
+    <button class="nav-tab" data-tab="batch-tab">
+      <span class="tab-icon">📁</span> Uji Folder (Batch)
+    </button>
+    <button class="nav-tab" data-tab="model-info-tab">
+      <span class="tab-icon">🧠</span> Info Arsitektur & Model
+    </button>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    
+    <!-- Tab 1: Single Image Inference -->
+    <section id="single-tab" class="tab-pane active">
+      <div class="grid-2-col">
+        
+        <!-- Left Column: Upload & Input -->
+        <div class="card glass upload-card">
+          <div class="card-header">
+            <h3>📂 Input Citra</h3>
+            <span class="card-sub">Pilih atau letakkan gambar</span>
+          </div>
+
+          <div id="dropzone" class="dropzone">
+            <div class="dropzone-content">
+              <div class="upload-icon">📤</div>
+              <h4>Tarik & Letakkan gambar di sini</h4>
+              <p>Format yang didukung: JPG, PNG, WEBP, BMP</p>
+              <div class="btn-group-upload">
+                <button id="btnBrowseFile" class="btn btn-primary">Pilih File Citra</button>
+                <input type="file" id="fileInput" accept="image/*" style="display: none;">
+              </div>
+            </div>
+            <div id="imagePreviewContainer" class="preview-container hidden">
+              <img id="imagePreview" alt="Pratinjau Citra" />
+              <button id="btnRemoveImage" class="btn-remove" title="Hapus Gambar">✕</button>
+            </div>
+          </div>
+
+          <!-- Quick Samples -->
+          <div class="quick-samples">
+            <div class="samples-label">Coba Contoh Gambar Uji:</div>
+            <div class="sample-chips">
+              <button class="chip chip-safe" data-sample="Safe">✅ Contoh Safe</button>
+              <button class="chip chip-violence" data-sample="Violence">⚠️ Contoh Violence</button>
+              <button class="chip chip-nsfw" data-sample="NSFW">🔞 Contoh NSFW</button>
+            </div>
+          </div>
+          
+          <div class="action-footer">
+            <button id="btnAnalyze" class="btn btn-action" disabled>
+              <span class="btn-text">🔍 Analisis Citra Sekarang</span>
+              <span class="spinner hidden" id="analyzeSpinner"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Right Column: Results & Explainability -->
+        <div class="card glass result-card">
+          <div class="card-header">
+            <h3>📊 Hasil Prediksi Multi-Feature</h3>
+            <span id="inferenceTimer" class="inference-time badge-pill">Waktu: - ms</span>
+          </div>
+
+          <!-- Placeholder when no result -->
+          <div id="emptyResultPlaceholder" class="empty-state">
+            <div class="empty-icon">🔬</div>
+            <h4>Belum Ada Gambar yang Dianalisis</h4>
+            <p>Pilih atau unggah gambar di panel kiri lalu klik "Analisis Citra Sekarang".</p>
+          </div>
+
+          <!-- Prediction Result View -->
+          <div id="resultContent" class="result-content hidden">
+            
+            <!-- Big Status Banner -->
+            <div id="resultBanner" class="result-banner">
+              <div class="badge-icon" id="bannerEmoji">✅</div>
+              <div class="badge-details">
+                <div class="badge-title" id="bannerClass">SAFE CONTENT</div>
+                <div class="badge-desc" id="bannerDesc">Konten aman tanpa indikasi kekerasan atau pornografi.</div>
+              </div>
+              <div class="confidence-pill" id="bannerConfidence">98.5%</div>
+            </div>
+
+            <!-- Multi-Feature Analysis Indicators -->
+            <div class="feature-indicators-grid">
+              <div class="indicator-box">
+                <span class="ind-icon">👤</span>
+                <div class="ind-info">
+                  <span class="ind-label">Deteksi Orang</span>
+                  <strong id="indHuman">Ya (1 orang)</strong>
+                </div>
+              </div>
+              <div class="indicator-box">
+                <span class="ind-icon">🦴</span>
+                <div class="ind-info">
+                  <span class="ind-label">Pose Landmark</span>
+                  <strong id="indPose">Terdeteksi</strong>
+                </div>
+              </div>
+              <div class="indicator-box">
+                <span class="ind-icon">🔀</span>
+                <div class="ind-info">
+                  <span class="ind-label">Pipeline Cabang</span>
+                  <strong id="indPipeline">Global + Crop + Pose</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Low confidence warning if applicable -->
+            <div id="lowConfidenceWarning" class="alert alert-warning hidden">
+              ⚠️ <strong>Peringatan Keyakinan Rendah:</strong> Model memiliki keyakinan di bawah 60%. Disarankan peninjauan manual (Human-in-the-Loop).
+            </div>
+
+            <!-- Probability Distribution Bars -->
+            <div class="prob-section">
+              <h4 class="section-title">Distribusi Probabilitas Kelas</h4>
+              
+              <div class="prob-item">
+                <div class="prob-header">
+                  <span class="prob-name">✅ Safe (Aman)</span>
+                  <span class="prob-val" id="valSafe">0.0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill fill-safe" id="barSafe" style="width: 0%"></div>
+                </div>
+              </div>
+
+              <div class="prob-item">
+                <div class="prob-header">
+                  <span class="prob-name">⚠️ Violence (Kekerasan)</span>
+                  <span class="prob-val" id="valViolence">0.0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill fill-violence" id="barViolence" style="width: 0%"></div>
+                </div>
+              </div>
+
+              <div class="prob-item">
+                <div class="prob-header">
+                  <span class="prob-name">🔞 NSFW (Dewasa)</span>
+                  <span class="prob-val" id="valNsfw">0.0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill fill-nsfw" id="barNsfw" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Reasoning -->
+            <div class="reasoning-section">
+              <h4 class="section-title">💡 Penjelasan Semantik AI</h4>
+              <div id="explanationBox" class="explanation-box">
+                -
+              </div>
+            </div>
+
+            <!-- Grad-CAM Visualizer Section -->
+            <div class="gradcam-section">
+              <div class="gradcam-header">
+                <h4 class="section-title">🔬 Grad-CAM Visual Explainability (XAI)</h4>
+                <div class="gradcam-tabs">
+                  <button class="g-tab active" data-view="overlay">Overlay Heatmap</button>
+                  <button class="g-tab" data-view="heatmap">Raw Heatmap</button>
+                  <button class="g-tab" data-view="original">Citra Asli</button>
+                </div>
+              </div>
+
+              <div class="gradcam-display-container">
+                <div id="gradcamLoading" class="gradcam-spinner-box hidden">
+                  <div class="spinner"></div>
+                  <span>Menghitung Class Activation Map...</span>
+                </div>
+                <img id="gradcamImage" class="gradcam-img" alt="Grad-CAM Visualization" />
+              </div>
+              <p class="gradcam-caption" id="gradcamCaption">Area berwarna merah-kuning menunjukkan wilayah citra yang paling mempengaruhi keputusan model.</p>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Tab 2: Batch Processing -->
+    <section id="batch-tab" class="tab-pane">
+      <div class="card glass batch-card">
+        <div class="card-header">
+          <h3>📁 Batch Testing / Evaluasi Folder</h3>
+          <span class="card-sub">Uji seluruh citra dalam suatu folder secara otomatis</span>
+        </div>
+
+        <div class="batch-control-bar">
+          <button id="btnSelectFolder" class="btn btn-secondary">📂 Pilih Folder Citra</button>
+          <span id="selectedFolderPath" class="folder-path-label">Belum ada folder dipilih</span>
+          <button id="btnStartBatch" class="btn btn-action" disabled>▶ Mulai Batch Test</button>
+        </div>
+
+        <!-- Batch Progress -->
+        <div id="batchProgressBox" class="batch-progress-box hidden">
+          <div class="progress-info">
+            <span id="batchProgressText">Memproses: 0 / 0 citra</span>
+            <span id="batchProgressPct">0%</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div id="batchProgressBar" class="progress-bar-fill fill-brand" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Summary Stats Cards -->
+        <div id="batchStats" class="batch-stats-grid hidden">
+          <div class="stat-card">
+            <div class="stat-num" id="statTotal">0</div>
+            <div class="stat-label">Total Sampel</div>
+          </div>
+          <div class="stat-card stat-safe">
+            <div class="stat-num" id="statSafe">0</div>
+            <div class="stat-label">Prediksi Safe</div>
+          </div>
+          <div class="stat-card stat-violence">
+            <div class="stat-num" id="statViolence">0</div>
+            <div class="stat-label">Prediksi Violence</div>
+          </div>
+          <div class="stat-card stat-nsfw">
+            <div class="stat-num" id="statNsfw">0</div>
+            <div class="stat-label">Prediksi NSFW</div>
+          </div>
+          <div class="stat-card stat-warn">
+            <div class="stat-num" id="statLowConf">0</div>
+            <div class="stat-label">Low Conf (&lt;60%)</div>
+          </div>
+        </div>
+
+        <!-- Results Table -->
+        <div class="table-responsive">
+          <table class="batch-table" id="batchTable">
+            <thead>
+              <tr>
+                <th>No</th>
+                <th>Nama File</th>
+                <th>Prediksi</th>
+                <th>Confidence</th>
+                <th>Deteksi Orang</th>
+                <th>Pose</th>
+                <th>Pipeline</th>
+                <th>Inference (ms)</th>
+              </tr>
+            </thead>
+            <tbody id="batchTableBody">
+              <tr>
+                <td colspan="8" class="text-center">Silakan pilih folder dan jalankan evaluasi.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Tab 3: Model Architecture & System Info -->
+    <section id="model-info-tab" class="tab-pane">
+      <div class="grid-2-col">
+        
+        <div class="card glass">
+          <div class="card-header">
+            <h3>🏗️ Arsitektur Multi-Feature Fusion</h3>
+            <span class="card-sub">MobileNetV2 + Human Crop + Pose Landmarks</span>
+          </div>
+
+          <div class="arch-flow">
+            <div class="arch-node arch-input">
+              <span class="node-icon">🖼️</span>
+              <div class="node-text">
+                <strong>Input Image (224x224x3)</strong>
+                <p>Citra masukan RGB dinormalisasi [0, 1]</p>
+              </div>
+            </div>
+            
+            <div class="arch-branch">
+              <div class="branch-card">
+                <span class="b-icon">🌐</span>
+                <strong>Cabang Global</strong>
+                <p>MobileNetV2 backbone (1,280-dim feature vector)</p>
+              </div>
+              <div class="branch-card">
+                <span class="b-icon">👤</span>
+                <strong>Cabang Human Crop</strong>
+                <p>Deteksi orang + MobileNetV2 (1,280-dim feature vector)</p>
+              </div>
+              <div class="branch-card">
+                <span class="b-icon">🦴</span>
+                <strong>Cabang Pose Estimator</strong>
+                <p>64-dim normalized relative pose vector</p>
+              </div>
+            </div>
+
+            <div class="arch-node arch-fusion">
+              <span class="node-icon">🔀</span>
+              <div class="node-text">
+                <strong>Feature Fusion Layer (2,626 Dimensi)</strong>
+                <p>Concatenation + Gating Masks (has_human, has_pose)</p>
+              </div>
+            </div>
+
+            <div class="arch-node arch-head">
+              <span class="node-icon">🎯</span>
+              <div class="node-text">
+                <strong>Classification Head & Softmax</strong>
+                <p>Dense(256) -> BatchNorm -> ReLU -> Dropout(0.4) -> Dense(3, Softmax)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <div class="card-header">
+            <h3>📋 Detail Model Aktif</h3>
+            <span class="card-sub">Informasi beban parameter dan status TensorFlow</span>
+          </div>
+
+          <div class="info-list" id="modelInfoList">
+            <div class="info-item">
+              <span class="info-key">File Model:</span>
+              <span class="info-val code" id="infoModelPath">models/final_model.keras</span>
+            </div>
+            <div class="info-item">
+              <span class="info-key">Backbone:</span>
+              <span class="info-val">MobileNetV2 (Pre-trained ImageNet)</span>
+            </div>
+            <div class="info-item">
+              <span class="info-key">Jumlah Kelas:</span>
+              <span class="info-val">3 (Safe, Violence, NSFW)</span>
+            </div>
+            <div class="info-item">
+              <span class="info-key">Input Shapes:</span>
+              <span class="info-val code" id="infoInputShapes">Global (224,224,3), Crop (224,224,3), Pose (64,)</span>
+            </div>
+            <div class="info-item">
+              <span class="info-key">Total Parameters:</span>
+              <span class="info-val code" id="infoTotalParams">-</span>
+            </div>
+            <div class="info-item">
+              <span class="info-key">Fine-Tuned Layers:</span>
+              <span class="info-val">Top 30 MobileNetV2 Layers Unfrozen</span>
+            </div>
+            <div class="info-item">
+              <span class="info-key">Explainability Method:</span>
+              <span class="info-val">Grad-CAM on Conv_1 layer</span>
+            </div>
+          </div>
+
+          <div class="eval-metrics-box">
+            <h4 class="section-title">Hasil Evaluasi Dataset Skripsi</h4>
+            <div class="mini-metrics-grid">
+              <div class="mini-metric">
+                <span class="m-label">Val Accuracy</span>
+                <span class="m-val">91.4%</span>
+              </div>
+              <div class="mini-metric">
+                <span class="m-label">Macro F1</span>
+                <span class="m-val">90.8%</span>
+              </div>
+              <div class="mini-metric">
+                <span class="m-label">Violence Recall</span>
+                <span class="m-val">89.2%</span>
+              </div>
+              <div class="mini-metric">
+                <span class="m-label">NSFW Recall</span>
+                <span class="m-val">94.6%</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast hidden">
+    <span id="toastIcon">ℹ️</span>
+    <span id="toastMsg">Pesan</span>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

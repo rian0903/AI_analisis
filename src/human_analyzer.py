@@ -1,17 +1,11 @@
-"""
-human_analyzer.py
-=================
-Person detection, human cropping with padding, pose estimation landmark extraction,
-and multi-person spatial relationship feature processing.
-
-Supports MediaPipe (when available) with a pure NumPy + OpenCV 5.0 fallthrough detector
-for complete Python 3.13+ compatibility.
-"""
+"""Person detection, human cropping, pose landmarks, and spatial features."""
 
 import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import cv2
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
 
 from src.config import (
     CROP_PADDING,
@@ -32,7 +26,8 @@ try:
     import mediapipe as mp
     MP_AVAILABLE = True
 except ImportError:
-    logger.info("MediaPipe not available. Using native OpenCV & NumPy human analyzer.")
+    mp = None
+    logger.warning("MediaPipe is unavailable; human and pose branches will be disabled.")
 
 
 class HumanAnalyzer:
@@ -57,80 +52,69 @@ class HumanAnalyzer:
         self.max_persons = max_persons
         self.image_size = image_size
 
-        self._mp_pose = None
-        if MP_AVAILABLE:
+        self._pose_landmarker = None
+        model_path = Path(__file__).resolve().parent.parent / "assets" / "pose_landmarker_lite.task"
+        if MP_AVAILABLE and model_path.is_file():
             try:
-                self._mp_pose = mp.solutions.pose.Pose(
-                    static_image_mode=True,
-                    model_complexity=1,
-                    enable_segmentation=False,
-                    min_detection_confidence=self.pose_threshold,
+                options = mp.tasks.vision.PoseLandmarkerOptions(
+                    base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
+                    running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                    num_poses=self.max_persons,
+                    min_pose_detection_confidence=self.person_threshold,
+                    min_pose_presence_confidence=self.person_threshold,
+                    min_tracking_confidence=self.pose_threshold,
                 )
+                self._pose_landmarker = mp.tasks.vision.PoseLandmarker.create_from_options(options)
             except Exception as e:
-                logger.debug(f"MediaPipe Pose init skipped: {e}")
+                logger.warning("MediaPipe Pose Landmarker init failed: %s", e)
+        elif MP_AVAILABLE:
+            logger.warning("Pose task asset not found at %s; human branches will be disabled.", model_path)
+
+    @staticmethod
+    def _as_uint8_rgb(image_np: np.ndarray) -> np.ndarray:
+        if image_np.dtype == np.uint8:
+            return np.ascontiguousarray(image_np)
+        return np.ascontiguousarray(np.clip(image_np * 255.0, 0, 255).astype(np.uint8))
+
+    def _detect_pose_landmarks(self, image_np: np.ndarray) -> List[List[Any]]:
+        if self._pose_landmarker is None:
+            return []
+        try:
+            image = mp.Image(
+                image_format=mp.ImageFormat.SRGB,
+                data=self._as_uint8_rgb(image_np),
+            )
+            return self._pose_landmarker.detect(image).pose_landmarks
+        except Exception as e:
+            logger.debug("Pose detection failed: %s", e)
+            return []
+
+    def _pose_detections(
+        self, poses: List[List[Any]], image_shape: Tuple[int, ...]
+    ) -> List[Tuple[Tuple[int, int, int, int, float], List[Any]]]:
+        h, w = image_shape[:2]
+        boxes = []
+        for landmarks in poses:
+            visible = [lm for lm in landmarks if float(lm.visibility) >= self.person_threshold]
+            if len(visible) < 4:
+                continue
+            xs = [int(np.clip(lm.x * w, 0, w - 1)) for lm in visible]
+            ys = [int(np.clip(lm.y * h, 0, h - 1)) for lm in visible]
+            x1, x2 = min(xs), max(xs) + 1
+            y1, y2 = min(ys), max(ys) + 1
+            if x2 - x1 <= 10 or y2 - y1 <= 10:
+                continue
+            confidence = float(np.mean([lm.visibility for lm in visible]))
+            boxes.append(((x1, y1, x2, y2, confidence), landmarks))
+        return sorted(boxes, key=lambda item: item[0][4], reverse=True)[:self.max_persons]
 
     def detect_persons(self, image_np: np.ndarray) -> List[Tuple[int, int, int, int, float]]:
         """
         Detect human bounding boxes in image.
         Returns list of (x_min, y_min, x_max, y_max, confidence).
         """
-        h, w = image_np.shape[:2]
-        boxes: List[Tuple[int, int, int, int, float]] = []
-
-        if image_np.dtype != np.uint8:
-            img_uint8 = np.clip(image_np * 255.0, 0, 255).astype(np.uint8)
-        else:
-            img_uint8 = image_np
-
-        # Strategy 1: MediaPipe (if available)
-        if self._mp_pose is not None:
-            try:
-                results = self._mp_pose.process(cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR))
-                if results.pose_landmarks:
-                    lms = results.pose_landmarks.landmark
-                    visibilities = [lm.visibility for lm in lms]
-                    avg_vis = float(np.mean(visibilities)) if visibilities else 0.0
-
-                    if avg_vis >= self.person_threshold:
-                        xs = [int(lm.x * w) for lm in lms if 0 <= lm.x <= 1]
-                        ys = [int(lm.y * h) for lm in lms if 0 <= lm.y <= 1]
-                        if xs and ys:
-                            x_min, x_max = max(0, min(xs)), min(w, max(xs))
-                            y_min, y_max = max(0, min(ys)), min(h, max(ys))
-                            if (x_max - x_min) > 10 and (y_max - y_min) > 10:
-                                boxes.append((x_min, y_min, x_max, y_max, round(avg_vis, 4)))
-            except Exception as e:
-                logger.debug(f"MediaPipe detection error: {e}")
-
-        # Strategy 2: Native Contour & Skin-Tone Human Bounding Box Detection
-        if not boxes:
-            try:
-                hsv = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2HSV)
-                # Skin tone mask in HSV
-                lower_skin = np.array([0, 20, 50], dtype=np.uint8)
-                upper_skin = np.array([25, 200, 255], dtype=np.uint8)
-                skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
-
-                # Morphological dilation to group body parts
-                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-                skin_mask = cv2.dilate(skin_mask, kernel, iterations=2)
-
-                contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                img_area = float(w * h)
-
-                for cnt in contours:
-                    area = cv2.contourArea(cnt)
-                    if area > (img_area * 0.02):  # >2% of image
-                        bx, by, bw, bh = cv2.boundingRect(cnt)
-                        aspect_ratio = float(bw) / float(bh)
-                        if 0.20 <= aspect_ratio <= 1.5:
-                            conf = min(0.95, round(0.4 + (area / img_area) * 0.5, 4))
-                            boxes.append((bx, by, bx + bw, by + bh, conf))
-            except Exception as e:
-                logger.debug(f"Contour human detection error: {e}")
-
-        boxes = sorted(boxes, key=lambda b: (b[4], (b[2]-b[0])*(b[3]-b[1])), reverse=True)[:self.max_persons]
-        return boxes
+        poses = self._detect_pose_landmarks(image_np)
+        return [box for box, _ in self._pose_detections(poses, image_np.shape)]
 
     def crop_human(
         self, image_np: np.ndarray, bbox: Tuple[int, int, int, int, float]
@@ -165,39 +149,20 @@ class HumanAnalyzer:
         Extract normalized pose keypoints (12 key landmarks x 3 = 36 features).
         Returns (pose_vector, pose_success_flag).
         """
+        poses = self._detect_pose_landmarks(image_np)
+        if not poses:
+            return np.zeros((POSE_FEATURE_DIM,), dtype=np.float32), False
+        return self._pose_vector(poses[0]), True
+
+    def _pose_vector(self, landmarks: List[Any]) -> np.ndarray:
         pose_vec = np.zeros((POSE_FEATURE_DIM,), dtype=np.float32)
-
-        if image_np.dtype != np.uint8:
-            img_uint8 = np.clip(image_np * 255.0, 0, 255).astype(np.uint8)
-        else:
-            img_uint8 = image_np
-
-        # Try MediaPipe first
-        if self._mp_pose is not None:
-            try:
-                results = self._mp_pose.process(cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR))
-                if results.pose_landmarks:
-                    lms = results.pose_landmarks.landmark
-                    idx_out = 0
-                    visibilities = []
-                    for idx in self.KEY_LANDMARK_INDICES:
-                        if idx < len(lms):
-                            lm = lms[idx]
-                            pose_vec[idx_out] = float(lm.x)
-                            pose_vec[idx_out + 1] = float(lm.y)
-                            pose_vec[idx_out + 2] = float(lm.visibility)
-                            visibilities.append(lm.visibility)
-                        idx_out += 3
-
-                    avg_vis = float(np.mean(visibilities)) if visibilities else 0.0
-                    if avg_vis >= self.pose_threshold:
-                        return pose_vec, True
-            except Exception as e:
-                logger.debug(f"MediaPipe pose extraction failed: {e}")
-
-        # If MediaPipe is not available or did not detect pose landmarks, return False
-        # so the model gating flag (has_pose = 0.0) cleanly deactivates the pose branch
-        return pose_vec, False
+        for output_idx, landmark_idx in enumerate(self.KEY_LANDMARK_INDICES):
+            if landmark_idx >= len(landmarks):
+                continue
+            landmark = landmarks[landmark_idx]
+            offset = output_idx * 3
+            pose_vec[offset:offset + 3] = (landmark.x, landmark.y, landmark.visibility)
+        return pose_vec
 
     def extract_relationship_features(
         self, boxes: List[Tuple[int, int, int, int, float]], img_shape: Tuple[int, int]
@@ -249,7 +214,9 @@ class HumanAnalyzer:
             image_np = np.squeeze(image_np, axis=0)
 
         h, w = image_np.shape[:2]
-        boxes = self.detect_persons(image_np)
+        poses = self._detect_pose_landmarks(image_np)
+        detections = self._pose_detections(poses, image_np.shape)
+        boxes = [box for box, _ in detections]
 
         if not boxes:
             empty_crop = np.zeros((*self.image_size, 3), dtype=np.float32)
@@ -267,7 +234,8 @@ class HumanAnalyzer:
         main_box = boxes[0]
         human_crop = self.crop_human(image_np, main_box)
 
-        pose_vec, pose_success = self.extract_pose_landmarks(human_crop)
+        pose_vec = self._pose_vector(detections[0][1])
+        pose_success = bool(np.mean(pose_vec[2::3]) >= self.pose_threshold)
         rel_vec = self.extract_relationship_features(boxes, (h, w))
         pose_rel_vector = np.concatenate([pose_vec, rel_vec], axis=0).astype(np.float32)
 

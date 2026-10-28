@@ -10,6 +10,7 @@ keras>=2.13.0
 # Computer Vision
 opencv-python>=4.8.0
 Pillow>=10.0.0
+mediapipe>=0.10.35
 
 # Scientific Computing
 numpy>=1.24.0

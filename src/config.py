@@ -51,3 +51,4 @@ PERSON_CONFIDENCE_THRESHOLD: float = 0.40
 POSE_CONFIDENCE_THRESHOLD: float = 0.40
 CROP_PADDING: float = 0.15  # 15% padding around detected human bounding box
 LOW_CONFIDENCE_THRESHOLD: float = 0.60
+CONFIDENCE_THRESHOLDS: List[float] = [0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]

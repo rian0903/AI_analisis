@@ -1,0 +1,11 @@
+{
+  "sample_idx": 380,
+  "true_label": "Violence",
+  "predicted_label": "NSFW",
+  "confidence": 0.925,
+  "probabilities": {
+    "Safe": 0.004232,
+    "Violence": 0.070758,
+    "NSFW": 0.92501
+  }
+}

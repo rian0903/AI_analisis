@@ -35,6 +35,7 @@ from src.config import (
     LOW_CONFIDENCE_THRESHOLD,
     TOTAL_POSE_REL_DIM,
 )
+from src.decision_utils import assess_decision
 from src.human_analyzer import HumanAnalyzer
 from src.utils import explain_activation, setup_logging
 
@@ -158,7 +159,8 @@ class ImagePredictor:
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
-        class_idx = int(np.argmax(probs_raw))
+        decision_info = assess_decision(probs_raw, class_names=self.class_names)
+        class_idx = int(decision_info["top_1_index"])
         predicted_class = self.class_names[class_idx]
         confidence = float(probs_raw[class_idx])
 
@@ -173,16 +175,26 @@ class ImagePredictor:
             "pose_detected": bool(analysis["has_pose"] == 1.0),
         }
 
-        low_confidence = bool(confidence < LOW_CONFIDENCE_THRESHOLD)
+        low_confidence = bool(
+            confidence < LOW_CONFIDENCE_THRESHOLD or decision_info["review"]
+        )
 
+        explanation_label = predicted_class if not decision_info["review"] else "REVIEW"
         explanations = {
-            predicted_class: explain_activation(
+            explanation_label: explain_activation(
                 predicted_class, confidence, human_analysis_info
             )
         }
 
         return {
             "prediction": predicted_class,
+            "decision": decision_info["decision"],
+            "review": decision_info["review"],
+            "top_1_confidence": decision_info["top_1_confidence"],
+            "top_2_confidence": decision_info["top_2_confidence"],
+            "margin": decision_info["margin"],
+            "entropy": decision_info["entropy"],
+            "normalized_entropy": decision_info["normalized_entropy"],
             "confidence": round(confidence, 4),
             "probabilities": probabilities_dict,
             "human_analysis": human_analysis_info,
@@ -191,7 +203,7 @@ class ImagePredictor:
             "inference_time_ms": round(elapsed_ms, 2),
             "file_path": source_name,
             "explanations": explanations,
-            "explanation_summary": explanations[predicted_class],
+            "explanation_summary": explanations[explanation_label],
             "input_tensors": inputs_dict,
         }
 

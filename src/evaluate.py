@@ -28,14 +28,19 @@ import pandas as pd
 import seaborn as sns
 import tensorflow as tf
 from sklearn.metrics import (
+    accuracy_score,
     auc,
+    average_precision_score,
+    balanced_accuracy_score,
     classification_report,
     confusion_matrix,
     f1_score,
     precision_score,
     recall_score,
+    roc_auc_score,
     roc_curve,
 )
+from sklearn.preprocessing import label_binarize
 from tensorflow import keras
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -45,6 +50,71 @@ from src.dataset import DatasetLoader
 from src.utils import save_figure, setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+def compute_extended_classification_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_prob: np.ndarray,
+    class_names: Optional[List[str]] = None,
+) -> Dict[str, float]:
+    """Compute extended multiclass metrics including specificity and AUC-based scores."""
+    y_true = np.asarray(y_true, dtype=int)
+    y_pred = np.asarray(y_pred, dtype=int)
+    y_prob = np.asarray(y_prob, dtype=np.float32)
+
+    class_names = list(class_names) if class_names is not None else [str(i) for i in range(len(np.unique(y_true)))]
+    num_classes = len(class_names)
+
+    metrics: Dict[str, float] = {
+        "overall_accuracy": float(accuracy_score(y_true, y_pred)),
+        "overall_precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
+        "overall_recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
+        "overall_f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+        "overall_f1_weighted": float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+    }
+
+    per_class_precision = precision_score(y_true, y_pred, average=None, zero_division=0)
+    per_class_recall = recall_score(y_true, y_pred, average=None, zero_division=0)
+    per_class_f1 = f1_score(y_true, y_pred, average=None, zero_division=0)
+
+    for i, class_name in enumerate(class_names):
+        tp = int(np.sum((y_true == i) & (y_pred == i)))
+        tn = int(np.sum((y_true != i) & (y_pred != i)))
+        fp = int(np.sum((y_true != i) & (y_pred == i)))
+        fn = int(np.sum((y_true == i) & (y_pred != i)))
+
+        precision = per_class_precision[i] if i < len(per_class_precision) else 0.0
+        recall = per_class_recall[i] if i < len(per_class_recall) else 0.0
+        f1 = per_class_f1[i] if i < len(per_class_f1) else 0.0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+
+        metrics[f"{class_name}_precision"] = float(precision)
+        metrics[f"{class_name}_recall"] = float(recall)
+        metrics[f"{class_name}_f1"] = float(f1)
+        metrics[f"{class_name}_specificity"] = float(specificity)
+
+    if y_prob.ndim == 1:
+        y_prob = y_prob.reshape(-1, 1)
+
+    if y_prob.shape[1] != num_classes:
+        if y_prob.shape[1] == 1 and num_classes > 1:
+            y_prob = np.hstack([1.0 - y_prob, y_prob])
+        else:
+            raise ValueError(f"Probability matrix shape {y_prob.shape} does not align with {num_classes} classes.")
+
+    y_bin = label_binarize(y_true, classes=np.arange(num_classes))
+    metrics["roc_auc_macro"] = float(roc_auc_score(y_bin, y_prob, average="macro", multi_class="ovr"))
+    metrics["average_precision_macro"] = float(average_precision_score(y_bin, y_prob, average="macro"))
+
+    for i, class_name in enumerate(class_names):
+        class_prob = y_prob[:, i]
+        class_true = y_bin[:, i]
+        metrics[f"{class_name}_roc_auc"] = float(roc_auc_score(class_true, class_prob))
+        metrics[f"{class_name}_pr_auc"] = float(average_precision_score(class_true, class_prob))
+
+    return metrics
 
 
 class ModelEvaluator:
@@ -99,28 +169,7 @@ class ModelEvaluator:
         y_pred: np.ndarray,
         y_prob: np.ndarray,
     ) -> Dict[str, float]:
-        overall_accuracy = float(np.mean(y_true == y_pred))
-        overall_precision = float(precision_score(y_true, y_pred, average="macro", zero_division=0))
-        overall_recall = float(recall_score(y_true, y_pred, average="macro", zero_division=0))
-        overall_f1_macro = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
-        overall_f1_weighted = float(f1_score(y_true, y_pred, average="weighted", zero_division=0))
-
-        metrics: Dict[str, float] = {
-            "overall_accuracy": overall_accuracy,
-            "overall_precision_macro": overall_precision,
-            "overall_recall_macro": overall_recall,
-            "overall_f1_macro": overall_f1_macro,
-            "overall_f1_weighted": overall_f1_weighted,
-        }
-
-        per_class_precision = precision_score(y_true, y_pred, average=None, zero_division=0)
-        per_class_recall = recall_score(y_true, y_pred, average=None, zero_division=0)
-        per_class_f1 = f1_score(y_true, y_pred, average=None, zero_division=0)
-
-        for i, class_name in enumerate(self.class_names):
-            metrics[f"{class_name}_precision"] = float(per_class_precision[i])
-            metrics[f"{class_name}_recall"] = float(per_class_recall[i])
-            metrics[f"{class_name}_f1"] = float(per_class_f1[i])
+        metrics = compute_extended_classification_metrics(y_true, y_pred, y_prob, self.class_names)
 
         logger.info("--- Evaluation Metrics ---")
         for k, v in metrics.items():
@@ -263,8 +312,26 @@ class ModelEvaluator:
         excel_path = self.models_dir / "evaluation_metrics.xlsx"
         with pd.ExcelWriter(str(excel_path), engine="openpyxl") as writer:
             summary_data = {
-                "Metric": ["Overall Accuracy", "Macro Precision", "Macro Recall", "Macro F1-Score", "Weighted F1-Score"],
-                "Value": [metrics["overall_accuracy"], metrics["overall_precision_macro"], metrics["overall_recall_macro"], metrics["overall_f1_macro"], metrics["overall_f1_weighted"]],
+                "Metric": [
+                    "Overall Accuracy",
+                    "Macro Precision",
+                    "Macro Recall",
+                    "Macro F1-Score",
+                    "Weighted F1-Score",
+                    "Balanced Accuracy",
+                    "ROC-AUC Macro",
+                    "PR-AUC Macro",
+                ],
+                "Value": [
+                    metrics.get("overall_accuracy", 0),
+                    metrics.get("overall_precision_macro", 0),
+                    metrics.get("overall_recall_macro", 0),
+                    metrics.get("overall_f1_macro", 0),
+                    metrics.get("overall_f1_weighted", 0),
+                    metrics.get("balanced_accuracy", 0),
+                    metrics.get("roc_auc_macro", 0),
+                    metrics.get("average_precision_macro", 0),
+                ],
             }
             pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
 
@@ -274,6 +341,9 @@ class ModelEvaluator:
                     "Precision": metrics.get(f"{class_name}_precision", 0),
                     "Recall": metrics.get(f"{class_name}_recall", 0),
                     "F1-Score": metrics.get(f"{class_name}_f1", 0),
+                    "Specificity": metrics.get(f"{class_name}_specificity", 0),
+                    "ROC-AUC": metrics.get(f"{class_name}_roc_auc", 0),
+                    "PR-AUC": metrics.get(f"{class_name}_pr_auc", 0),
                     "AUC": auc_scores.get(class_name, 0),
                 }
                 for class_name in self.class_names
